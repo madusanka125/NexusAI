@@ -689,6 +689,11 @@
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-app.js";
         import { getAuth, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-auth.js";
+        import { GoogleGenerativeAI } from "https://esm.run/@google/generative-ai";
+
+        // IMPORTANT: Replace this with your actual Gemini API Key from Google AI Studio
+        const GEMINI_API_KEY = "YOUR_API_KEY_HERE";
+        const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
 
         const firebaseConfig = {
             apiKey: "AIzaSyCcvPgEk2LOxzgYNH4MzCzCFwDPP3SQSIA",
@@ -814,9 +819,12 @@
 
         chatInput.addEventListener('input', updateSendBtnState);
 
-        function appendMessage(text, isUser = false, imageSrc = null) {
+        function appendMessage(text, isUser = false, imageSrc = null, messageId = null) {
             const msgDiv = document.createElement('div');
             msgDiv.className = `message ${isUser ? 'user' : 'bot'}`;
+            if (messageId) {
+                msgDiv.id = messageId;
+            }
 
             const avatar = document.createElement('div');
             avatar.className = 'avatar';
@@ -826,9 +834,16 @@
             contentDiv.className = 'message-content';
 
             if (text) {
-                const textNode = document.createElement('span');
-                textNode.textContent = text;
-                contentDiv.appendChild(textNode);
+                const textNodes = text.split('\n');
+                textNodes.forEach((nodeStr, index) => {
+                    const span = document.createElement('span');
+                    // Basic bold parsing for Markdown
+                    span.innerHTML = nodeStr.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+                    contentDiv.appendChild(span);
+                    if (index < textNodes.length - 1) {
+                        contentDiv.appendChild(document.createElement('br'));
+                    }
+                });
             }
 
             if (imageSrc) {
@@ -844,13 +859,19 @@
             chatMessages.scrollTop = chatMessages.scrollHeight;
         }
 
-        function handleSend() {
+        function removeMessage(messageId) {
+            const el = document.getElementById(messageId);
+            if (el) el.remove();
+        }
+
+        async function handleSend() {
             const text = chatInput.value.trim();
             const hasImage = currentAttachedImage !== null;
 
             if (!text && !hasImage) return;
 
-            appendMessage(text, true, currentAttachedImage);
+            const imageRef = currentAttachedImage;
+            appendMessage(text, true, imageRef);
 
             chatInput.value = '';
             if (hasImage) {
@@ -858,10 +879,47 @@
             }
             updateSendBtnState();
 
-            // Simulate Bot Response
-            setTimeout(() => {
-                appendMessage("I am processing your request. Currently, I am a frontend prototype so my conversational abilities are simulated!", false);
-            }, 1200);
+            const loadingId = "loading-" + Date.now();
+            appendMessage("Thinking...", false, null, loadingId);
+
+            try {
+                if (GEMINI_API_KEY === "YOUR_API_KEY_HERE") {
+                    throw new Error("Please add your Gemini API Key in the chat.html code (Look for GEMINI_API_KEY).");
+                }
+
+                const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+
+                let result;
+                if (hasImage && imageRef) {
+                    const parts = [];
+                    if (text) parts.push(text);
+                    else parts.push("Describe this image");
+
+                    const base64Data = imageRef.split(',')[1];
+                    const mimeType = imageRef.match(/[^:]\w+\/[\w-+\d.]+(?=;|,)/)[0];
+
+                    parts.push({
+                        inlineData: {
+                            data: base64Data,
+                            mimeType: mimeType
+                        }
+                    });
+
+                    result = await model.generateContent(parts);
+                } else {
+                    result = await model.generateContent(text);
+                }
+
+                const response = await result.response;
+
+                removeMessage(loadingId);
+                appendMessage(response.text(), false);
+
+            } catch (error) {
+                console.error("Gemini API Error:", error);
+                removeMessage(loadingId);
+                appendMessage("Error: " + error.message, false);
+            }
         }
 
         sendBtn.addEventListener('click', handleSend);
